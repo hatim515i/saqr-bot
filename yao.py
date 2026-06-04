@@ -31,8 +31,7 @@ async def check_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ الرابط يبدو آمناً.")
     else:
         await update.message.reply_text("🔗 أرسل لي رابطاً يبدأ بـ http")
-
-if__name__ == '__main__':
+if __name__ == '__main__':
     # تشغيل السيرفر في الخلفية
     Thread(target=run_server).start()
     
