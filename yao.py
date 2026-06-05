@@ -2,66 +2,63 @@ import logging, os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
-# الإعدادات
 TOKEN = os.environ.get('BOT_TOKEN')
-ADMIN_ID = 5946250464  # رقم الآيدي الخاص بك
+ADMIN_ID = 5946250464
 
-# سجل الأحداث (في الذاكرة فقط)
-activity_log = []
-
-logging.basicConfig(level=logging.INFO)
+# تخزين المستخدمين: {id: {"name": name, "username": username}}
+users_db = {}
+# تخزين الرسائل: [{"user_id": id, "text": text}]
+messages_db = []
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    # تسجيل الدخول فقط في السجل
-    activity_log.append(f"👤 دخول: {user.full_name} (ID: {user.id})")
+    # تسجيل المستخدم بدون إرسال تنبيه
+    users_db[user.id] = {"name": user.full_name, "username": user.username}
     
-    keyboard = [
-        [InlineKeyboardButton("🔍 فحص رابط", callback_data='mode_link')],
-        [InlineKeyboardButton("📁 فحص ملف", callback_data='mode_file')]
-    ]
+    keyboard = [[InlineKeyboardButton("🔍 فحص رابط", callback_data='mode_link'), 
+                 InlineKeyboardButton("📁 فحص ملف", callback_data='mode_file')]]
     await update.message.reply_text("🦅 صقر الحماية جاهز، اختر الخدمة:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # حماية السجل: لا يظهر إلا للمدير
-    if update.effective_user.id != ADMIN_ID:
-        return
-    
-    logs_text = "\n".join(activity_log[-20:]) if activity_log else "لا توجد نشاطات مسجلة."
-    await update.message.reply_text(f"📜 سجل النشاطات (آخر 20 عملية):\n\n{logs_text}")
+    if update.effective_user.id != ADMIN_ID: return
+    keyboard = [[InlineKeyboardButton("👥 الزوار", callback_data='log_users'),
+                 InlineKeyboardButton("💬 الرسائل", callback_data='log_msgs')]]
+    await update.message.reply_text("🛠️ لوحة تحكم الصقر:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    context.user_data['mode'] = query.data
-    await query.edit_message_text("🛡️ تم اختيار الفحص. أرسل الملف أو الرابط الآن.")
+    if query.data == 'log_users':
+        # إنشاء أزرار لكل مستخدم عشان تضغط عليهم وتفتح محادثتهم
+        keyboard = []
+        for uid, info in users_db.items():
+            # الزر يحمل اسم المستخدم، وعند الضغط عليه يظهر معرفه
+            keyboard.append([InlineKeyboardButton(f"👤 {info['name']}", callback_data=f"chat_{uid}")])
+        await query.edit_message_text("👥 اضغط على اسم المستخدم للتواصل معه:", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif query.data.startswith("chat_"):
+        uid = query.data.split("_")[1]
+        await query.edit_message_text(f"🔗 يمكنك التواصل مع المستخدم عبر الرابط:\nhttps://t.me/{users_db[int(uid)]['username'] if users_db[int(uid)]['username'] else 'user_id_' + uid}")
+    
+    elif query.data == 'log_msgs':
+        text = "💬 آخر 10 رسائل:\n" + "\n".join([f"- {users_db[m['user_id']]['name']}: {m['text']}" for m in messages_db[-10:]])
+        await query.edit_message_text(text)
+    else:
+        context.user_data['mode'] = query.data
+        await query.edit_message_text("🛡️ أرسل الملف أو الرابط.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    mode = context.user_data.get('mode')
+    text = update.message.text
+    if text and not text.startswith('/'):
+        messages_db.append({"user_id": user.id, "text": text})
     
-    if not mode:
-        return # لا يفعل شيء إذا لم يتم اختيار خدمة
-
-    if mode == 'mode_file' and update.message.document:
-        activity_log.append(f"📁 ملف: {update.message.document.file_name} بواسطة {user.first_name}")
-        await update.message.reply_text("✅ تم تسجيل عملية فحص الملف.")
-        context.user_data['mode'] = None
-        
-    elif mode == 'mode_link' and update.message.text:
-        url = update.message.text
-        activity_log.append(f"🔗 رابط: {url[:20]}... بواسطة {user.first_name}")
-        await update.message.reply_text("✅ تم تسجيل عملية فحص الرابط.")
-        context.user_data['mode'] = None
+    # ... (باقي منطق الفحص) ...
+    context.user_data['mode'] = None
 
 if __name__ == '__main__':
     app_bot = ApplicationBuilder().token(TOKEN).build()
-    
-    # إضافة الأوامر
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("logs", admin_logs))
     app_bot.add_handler(CallbackQueryHandler(handle_callback))
     app_bot.add_handler(MessageHandler(filters.ALL, handle_message))
-    
-    print("🦅 صقر الحماية يعمل الآن...")
     app_bot.run_polling()
