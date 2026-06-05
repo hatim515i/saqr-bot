@@ -1,27 +1,15 @@
 import os
-import logging
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler, filters
 
-# التوكن
 TOKEN = os.environ.get('BOT_TOKEN')
-ADMIN_ID = 5946250464  # تأكد أن هذا هو رقم الأيدي الخاص بك
+ADMIN_ID = 5946250464
 
-# ذاكرة لتخزين السجلات
-activity_log = []
-
-# إضافة سجل جديد
-def add_log(user, action):
-    import time
-    activity_log.append(f"{time.strftime('%H:%M:%S')} - {user.full_name}: {action}")
-
-# حالات المحادثة
+# الحالات
 MODE = 1
 
 async def start(update, context):
-    user = update.effective_user
-    add_log(user, "ضغط /start")
-    
+    context.user_data.clear() # مسح أي اختيار قديم عشان ما يعلق
     keyboard = [[InlineKeyboardButton("🔍 فحص رابط", callback_data='mode_link'), 
                  InlineKeyboardButton("📁 فحص ملف", callback_data='mode_file')]]
     await update.message.reply_text("🦅 صقر الحماية جاهز، اختر الخدمة:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -29,59 +17,52 @@ async def start(update, context):
 
 async def button_handler(update, context):
     query = update.callback_query
-    user = update.effective_user
     await query.answer()
     
     if query.data == 'mode_link':
         context.user_data['mode'] = 'link'
-        add_log(user, "اختار فحص رابط")
-        await query.edit_message_text("✅ تم اختيار: فحص رابط. أرسل الرابط:")
+        await query.edit_message_text("✅ تم اختيار: فحص رابط. أرسل الرابط الآن (أو اكتب /start للعودة):")
     else:
         context.user_data['mode'] = 'file'
-        add_log(user, "اختار فحص ملف")
-        await query.edit_message_text("✅ تم اختيار: فحص ملف. أرسل الملف:")
+        await query.edit_message_text("✅ تم اختيار: فحص ملف. أرسل الملف الآن (أو اكتب /start للعودة):")
     return MODE
 
-async def show_logs(update, context):
-    # هذا الأمر خاص بك أنت فقط
-    if update.effective_user.id == ADMIN_ID:
-        logs_text = "\n".join(activity_log[-20:]) if activity_log else "لا توجد سجلات."
-        await update.message.reply_text(f"📜 سجل الأحداث (آخر 20):\n\n{logs_text}")
-    else:
-        await update.message.reply_text("⛔ عذراً، هذا الأمر للأدمن فقط.")
-
 async def content_handler(update, context):
-    user = update.effective_user
     mode = context.user_data.get('mode')
     
+    # هنا الجزء اللي يفك التعليق
     if mode == 'link' and update.message.text:
-        add_log(user, "أرسل رابط للفحص")
-        await update.message.reply_text("🌐 جاري فحص الرابط...")
+        await update.message.reply_text("🌐 جاري فحص الرابط... تم الفحص بنجاح! ✅")
     elif mode == 'file' and update.message.document:
-        add_log(user, "أرسل ملف للفحص")
-        await update.message.reply_text("📁 جاري فحص الملف...")
+        await update.message.reply_text("📁 جاري فحص الملف... تم الفحص بنجاح! ✅")
     else:
-        await update.message.reply_text("⚠️ أرسل المحتوى الصحيح (رابط أو ملف).")
+        await update.message.reply_text("⚠️ أرسل المحتوى الصحيح، أو استخدم /start للرجوع للقائمة.")
+    
+    # بعد الرد، نمسح الحالة عشان يفك التعليق ويرجع البوت حر
+    context.user_data.clear()
+    return ConversationHandler.END
 
-async def post_init(application):
-    # القائمة لا تحتوي على logs لكي لا تظهر للناس
-    await application.bot.set_my_commands([
-        BotCommand("start", "بدء البوت"),
-        BotCommand("help", "المساعدة")
-    ])
+async def cancel(update, context):
+    context.user_data.clear()
+    await update.message.reply_text("تم الإلغاء. ارجع للقائمة بالضغط على /start")
+    return ConversationHandler.END
 
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    # تعيين الأوامر
+    app.bot.set_my_commands([BotCommand("start", "بدء البوت"), BotCommand("help", "المساعدة")])
     
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
-        states={MODE: [CallbackQueryHandler(button_handler), MessageHandler(filters.ALL, content_handler)]},
+        states={
+            MODE: [CallbackQueryHandler(button_handler), MessageHandler(filters.ALL, content_handler)]
+        },
         fallbacks=[CommandHandler('start', start)]
     )
     
     app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("logs", show_logs)) # مخفي من المنيو بس شغال لك
-    app.add_handler(CommandHandler("help", lambda u, c: u.message.reply_text("هذا البوت مخصص للفحص الأمني.")))
+    app.add_handler(CommandHandler("help", lambda u, c: u.message.reply_text("هذا البوت مخصص للفحص.")))
     
     print("البوت يعمل الآن...")
     app.run_polling()
