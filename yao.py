@@ -3,25 +3,16 @@ from flask import Flask
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler, filters
 
-# 1. السيرفر الوهمي (الخداع) ليبقى البوت شغال 24 ساعة
+# سيرفر الخداع (رندر)
 PORT = int(os.environ.get('PORT', 10000))
 app = Flask(__name__)
 @app.route('/')
-def home(): return "صقر الحماية شغال 🦅"
+def home(): return "البوت شغال 🦅"
 threading.Thread(target=lambda: app.run(host='0.0.0.0', port=PORT)).start()
 
-# إعدادات
 TOKEN = os.environ.get('BOT_TOKEN')
 VT_API_KEY = os.environ.get('VT_API_KEY')
 MODE = 1
-
-# قائمة التصيد (Blacklist) - تقدر تضيف أي كلمات تبيها
-PHISHING_KEYWORDS = ['login', 'bank', 'verify', 'account', 'free-rewards', 'secure-update']
-
-def check_blacklist(url):
-    for word in PHISHING_KEYWORDS:
-        if word in url.lower(): return True
-    return False
 
 async def start(update, context):
     context.user_data.clear()
@@ -33,32 +24,30 @@ async def start(update, context):
 async def button_handler(update, context):
     query = update.callback_query
     await query.answer()
-    mode = query.data.split('_')[1]
-    context.user_data['mode'] = mode
-    await query.edit_message_text(f"✅ تم اختيار: فحص {mode}. أرسل الآن:")
+    context.user_data['mode'] = 'link' if query.data == 'mode_link' else 'file'
+    await query.edit_message_text(f"✅ اخترت فحص {context.user_data['mode']}. أرسل الآن:")
     return MODE
 
 async def handle_content(update, context):
     mode = context.user_data.get('mode')
-    if not mode: return ConversationHandler.END
-
-    status_msg = await update.message.reply_text("⏳ جاري الفحص في البيئة الآمنة (Sandbox)...")
+    status_msg = await update.message.reply_text("⏳ جاري الفحص في البيئة الآمنة (يرجى الانتظار)...")
     headers = {"x-apikey": VT_API_KEY}
 
     try:
         if mode == 'link' and update.message.text:
             url = update.message.text
-            # فحص البلاك ليست أولاً
-            if check_blacklist(url):
-                await status_msg.edit_text("🚨 **تحذير!** الرابط مشبوه وموجود في قائمة التصيد.")
-                return ConversationHandler.END
-            
+            # إرسال الرابط للـ Scan
             resp = requests.post("https://www.virustotal.com/api/v3/urls", headers=headers, data={"url": url})
             analysis_id = resp.json()['data']['id']
+            
+            # جلب النتيجة (ننتظر ونطلب التقرير)
             res = requests.get(f"https://www.virustotal.com/api/v3/analyses/{analysis_id}", headers=headers)
             stats = res.json()['data']['attributes']['stats']
-            msg = f"🛡️ نتيجة الفحص:\n🔴 ضار: {stats['malicious']}\n🟡 مشبوه: {stats['suspicious']}\n🟢 آمن: {stats['harmless']}"
             
+            msg = f"🛡️ تقرير الفحص:\n🔴 ضار: {stats['malicious']}\n🟡 مشبوه: {stats['suspicious']}\n🟢 آمن: {stats['harmless']}"
+            if stats['malicious'] > 0: msg += "\n\n❌ **الرابط غير آمن!**"
+            else: msg += "\n\n✅ **الرابط سليم.**"
+
         elif mode == 'file' and update.message.document:
             file = await update.message.document.get_file()
             file_path = "temp_file"
@@ -68,13 +57,17 @@ async def handle_content(update, context):
                 file_id = resp.json()['data']['id']
                 res = requests.get(f"https://www.virustotal.com/api/v3/analyses/{file_id}", headers=headers)
                 stats = res.json()['data']['attributes']['stats']
-                msg = f"🛡️ نتيجة فحص الملف:\n🔴 ضار: {stats['malicious']}\n🟢 آمن: {stats['harmless']}"
+                msg = f"🛡️ تقرير الملف:\n🔴 ضار: {stats['malicious']}\n🟢 آمن: {stats['harmless']}"
             os.remove(file_path)
         
-        await status_msg.edit_text(msg + ("\n\n⚠️ **تحذير: تم اكتشاف خطر!**" if stats['malicious'] > 0 else "\n\n✅ **الرابط/الملف يبدو سليماً.**"))
+        else:
+            msg = "⚠️ خطأ: أرسلت شي غير المطلوب (رابط أو ملف)."
+
+        await status_msg.edit_text(msg)
     except Exception as e:
-        await status_msg.edit_text(f"❌ خطأ تقني: {str(e)}")
+        await status_msg.edit_text(f"❌ فشل الفحص: {str(e)}")
     
+    context.user_data.clear()
     return ConversationHandler.END
 
 if __name__ == '__main__':
