@@ -14,7 +14,7 @@ TOKEN = os.environ.get('BOT_TOKEN')
 VT_API_KEY = os.environ.get('VT_API_KEY')
 MODE = 1
 
-# قائمة التصيد (Blacklist) - أي كلمة من هذه الكلمات تعني تصيد فوراً
+# قائمة التصيد (Blacklist)
 PHISHING_KEYWORDS = ['login', 'bank', 'free-money', 'verify', 'account', 'secure-update', 'rewards', 'prize', 'iclod', 'apple-secure', 'scam']
 
 def check_blacklist(url):
@@ -38,14 +38,14 @@ async def button_handler(update, context):
 
 async def handle_content(update, context):
     mode = context.user_data.get('mode')
-    status_msg = await update.message.reply_text("⏳ جاري الفحص في بيئة آمنة (Sandbox)...")
+    status_msg = await update.message.reply_text("⏳ جارِ الفحص في بيئة آمنة...")
     headers = {"x-apikey": VT_API_KEY}
 
     try:
         if mode == 'link' and update.message.text:
             url = update.message.text
             
-            # 1. فحص البلاك ليست (فوري)
+            # 1. فحص البلاك ليست
             if check_blacklist(url):
                 await status_msg.edit_text("🚨 **تحذير شديد!**\nالرابط مشبوه ومصنف ضمن أدوات التصيد.")
                 return ConversationHandler.END
@@ -54,14 +54,12 @@ async def handle_content(update, context):
             resp = requests.post("https://www.virustotal.com/api/v3/urls", headers=headers, data={"url": url})
             analysis_id = resp.json()['data']['id']
             
-            # انتظر قليلاً لضمان اكتمال التحليل
             time.sleep(5) 
             
             res = requests.get(f"https://www.virustotal.com/api/v3/analyses/{analysis_id}", headers=headers)
             stats = res.json()['data']['attributes']['stats']
             
-            # التقرير الذكي (بدل الأصفار)
-            msg = f"🛡️ **نتيجة الفحص (بيئة آمنة):**\n\n🔴 ضار: {stats['malicious']}\n🟡 مشبوه: {stats['suspicious']}\n🟢 آمن: {stats['harmless']}\n\n"
+            msg = f"🛡️ **نتيجة الفحص:**\n\n🔴 ضار: {stats['malicious']}\n🟡 مشبوه: {stats['suspicious']}\n🟢 آمن: {stats['harmless']}\n\n"
             
             if stats['malicious'] > 0:
                 msg += "❌ **الرابط غير آمن!**"
