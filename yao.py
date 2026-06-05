@@ -48,12 +48,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     app_bot = ApplicationBuilder().token(TOKEN).build()
     
-    # مسح أي قائمة قديمة عالقة
+    # الخطوة الحاسمة: مسح القائمة من تليجرام وإعادة تعيينها بدون logs
     app_bot.bot.delete_my_commands()
-    
-    # تعيين القائمة النظيفة للجميع (start و help فقط)
-    commands = [("start", "بدء البوت"), ("help", "المساعدة")]
-    app_bot.bot.set_my_commands(commands)
+    app_bot.bot.set_my_commands([("start", "بدء البوت"), ("help", "المساعدة")])
     
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("help", help_command))
