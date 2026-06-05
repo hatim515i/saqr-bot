@@ -1,4 +1,4 @@
-import logging, os
+import logging, os, asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
 
@@ -6,7 +6,6 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 TOKEN = os.environ.get('BOT_TOKEN')
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # كود الترحيب فقط (تم حذف كود التنبيه بالدخول)
     keyboard = [[InlineKeyboardButton("🔍 فحص رابط", callback_data='mode_link'), 
                  InlineKeyboardButton("📁 فحص ملف", callback_data='mode_file')]]
     
@@ -23,16 +22,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     await query.edit_message_text("🛡️ أرسل الملف أو الرابط للفحص.")
 
+async def setup_commands(app):
+    # مسح الأوامر القديمة وتعيين الجديدة فقط (بدون logs)
+    await app.bot.delete_my_commands()
+    await app.bot.set_my_commands([("start", "بدء البوت"), ("help", "المساعدة")])
+
 if __name__ == '__main__':
     app_bot = ApplicationBuilder().token(TOKEN).build()
     
-    # مسح أي أوامر قديمة عالقة من سيرفرات تليجرام
-    app_bot.bot.delete_my_commands()
+    # تنفيذ إعداد الأوامر قبل تشغيل البوت
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(setup_commands(app_bot))
     
-    # تعيين القائمة النظيفة للجميع (start و help فقط)
-    app_bot.bot.set_my_commands([("start", "بدء البوت"), ("help", "المساعدة")])
-    
-    # إضافة الأوامر
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("help", help_command))
     app_bot.add_handler(CallbackQueryHandler(handle_callback))
