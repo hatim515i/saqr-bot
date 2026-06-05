@@ -1,7 +1,7 @@
 import os, requests, time, threading
 from bs4 import BeautifulSoup
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
 # إعدادات النظام
 PORT = int(os.environ.get('PORT', 10000))
@@ -9,76 +9,93 @@ TOKEN = os.environ.get('BOT_TOKEN')
 VT_API_KEY = os.environ.get('VT_API_KEY')
 MAX_FILE_SIZE = 10 * 1024 * 1024 
 
-# 1. فك الروابط
+# مراحل المحادثة
+CHOOSING = 1
+
+# --- الدوال الأمنية (الفحص) ---
 def get_final_url(url):
     try:
         res = requests.head(url, allow_redirects=True, timeout=5)
         return res.url
     except: return url
 
-# 2. الفحص الميداني (تحليل المحتوى)
 def deep_scan_url(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(res.text, 'html.parser')
-        if soup.find('input', {'type': 'password'}): return True
-        return False
+        return bool(soup.find('input', {'type': 'password'}))
     except: return False
 
-# 3. الفحص العالمي (خلف الكواليس)
-def vt_check(url_or_file_id, is_file=False):
+def vt_check(data, is_file=False):
     try:
         headers = {"x-apikey": VT_API_KEY}
-        if not is_file:
-            resp = requests.post("https://www.virustotal.com/api/v3/urls", headers=headers, data={"url": url_or_file_id})
-        else:
-            resp = requests.post("https://www.virustotal.com/api/v3/files", headers=headers, files={"file": url_or_file_id})
+        url = "https://www.virustotal.com/api/v3/files" if is_file else "https://www.virustotal.com/api/v3/urls"
+        data_payload = {"url": data} if not is_file else {"file": data}
         
+        resp = requests.post(url, headers=headers, files=data_payload if is_file else None, data=data_payload if not is_file else None)
         analysis_id = resp.json()['data']['id']
-        time.sleep(5)
+        time.sleep(5) # انتظار الفحص
         res = requests.get(f"https://www.virustotal.com/api/v3/analyses/{analysis_id}", headers=headers)
         stats = res.json()['data']['attributes']['stats']
         return stats['malicious'] > 0
     except: return False
 
-# المعالج الذكي (يميز الرابط عن الملف تلقائياً)
-async def handle_everything(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # تجاهل رسائل ستارت هنا
-    if update.message.text and update.message.text.startswith('/start'):
-        return
+# --- معالجات البوت ---
 
-    status_msg = await update.message.reply_text("🦅 صقر الحماية يجري الفحص الآن...")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🔍 فحص رابط", callback_data='link')],
+        [InlineKeyboardButton("📁 فحص ملف", callback_data='file')]
+    ]
+    await update.message.reply_text("🦅 صقر الحماية: اختر نوع الفحص للبدء:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return CHOOSING
 
-    # إذا كان المرسل رابط
-    if update.message.text and update.message.text.startswith("http"):
+async def choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    context.user_data['mode'] = query.data
+    await query.answer()
+    await query.edit_message_text(f"✅ تم اختيار {query.data}. أرسل الآن {query.data} للفحص:")
+    return CHOOSING
+
+async def handle_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mode = context.user_data.get('mode')
+    if not mode:
+        await update.message.reply_text("⚠️ يرجى الضغط على /start أولاً لاختيار وضع الفحص.")
+        return CHOOSING
+
+    status_msg = await update.message.reply_text("🦅 جاري تشغيل فحص صقر الحماية...")
+    
+    is_bad = False
+    if mode == 'link' and update.message.text:
         url = get_final_url(update.message.text)
         is_bad = vt_check(url) or deep_scan_url(url)
-        report = f"🛡️ **تقرير صقر الحماية**\n\n🔗 الرابط: {url}\n\nالنتيجة: {'❌ خطر! تم كشف تهديد.' if is_bad else '✅ آمن.'}"
+        report = f"🛡️ **تقرير صقر الحماية**\n🔗 الرابط: {url}\nالنتيجة: {'❌ خطر!' if is_bad else '✅ آمن.'}"
     
-    # إذا كان المرسل ملف
-    elif update.message.document:
+    elif mode == 'file' and update.message.document:
         doc = update.message.document
         if doc.file_size > MAX_FILE_SIZE:
-            report = "❌ الملف كبير جداً! صقر الحماية لا يفحص أكثر من 10MB."
+            report = "❌ الملف كبير جداً (أكثر من 10MB)."
         else:
-            file = await doc.get_file()
-            file_bytes = await file.download_as_bytearray()
+            file_bytes = await (await doc.get_file()).download_as_bytearray()
             is_bad = vt_check(file_bytes, is_file=True)
-            report = f"🛡️ **تقرير صقر الحماية**\n\nملف: {doc.file_name}\n\nالنتيجة: {'❌ خطر! الملف مشبوه.' if is_bad else '✅ آمن.'}"
+            report = f"🛡️ **تقرير صقر الحماية**\nملف: {doc.file_name}\nالنتيجة: {'❌ خطر!' if is_bad else '✅ آمن.'}"
     else:
-        report = "🦅 أرسل رابط أو ملف وسأقوم بفحصه فوراً."
-    
+        report = "⚠️ أرسل الشيء الصحيح بناءً على اختيارك (رابط أو ملف)."
+
     await status_msg.edit_text(report)
+    context.user_data.clear() # مسح البيانات بعد الفحص
+    return ConversationHandler.END
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # رسالة ترحيب بسيطة
-    app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("🦅 صقر الحماية في الخدمة. أرسل الرابط أو الملف للفحص فوراً!")))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={CHOOSING: [CallbackQueryHandler(choice_handler), MessageHandler(filters.ALL & (~filters.COMMAND), handle_scan)]},
+        fallbacks=[CommandHandler('start', start)]
+    )
     
-    # معالج لكل شيء (نصوص أو ملفات)
-    app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_everything))
-    
+    app.add_handler(conv_handler)
     threading.Thread(target=lambda: os.system(f"python3 -m http.server {PORT}"), daemon=True).start()
     app.run_polling()
