@@ -1,87 +1,93 @@
 import logging
 import os
+import requests
 import time
+import hashlib
 from flask import Flask
 from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
-# 1. الإعدادات
+# الإعدادات
 TOKEN = os.environ.get('BOT_TOKEN')
+VT_API_KEY = os.environ.get('VT_API_KEY')
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 ميجابايت حد أقصى للجميع (VIP لاحقاً)
 user_last_request = {}
 
 logging.basicConfig(level=logging.INFO)
 
-# 2. السيرفر (Keep Alive)
+# سيرفر Keep Alive
 app = Flask(__name__)
 @app.route('/')
-def home(): return "صقر الحماية يعمل بكفاءة 🦅"
+def home(): return "صقر الحماية يعمل"
 
 def run_server():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
 
-# 3. نظام الحماية (Rate Limiter)
+# دالة فحص الملفات (Hash)
+def get_file_hash(file_path):
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+# نظام السرعة
 async def is_rate_limited(update: Update):
     user_id = update.effective_user.id
     current_time = time.time()
-    last_time = user_last_request.get(user_id, 0)
-    if current_time - last_time < 5:
-        remaining = int(5 - (current_time - last_time))
-        msg = f"⏳ مهلاً! انتظر {remaining} ثوانٍ قبل الطلب التالي."
+    if current_time - user_last_request.get(user_id, 0) < 5:
+        msg = "⏳ انتظر 5 ثوانٍ قبل الطلب التالي."
         if update.message: await update.message.reply_text(msg)
         else: await update.callback_query.answer(msg, show_alert=True)
         return True
     user_last_request[user_id] = current_time
     return False
 
-# 4. الأوامر والمنيو
+# الأوامر
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # الأزرار التفاعلية تحت الرسالة
     keyboard = [
         [InlineKeyboardButton("🔍 فحص رابط", callback_data='mode_link')],
         [InlineKeyboardButton("📁 فحص ملف", callback_data='mode_file')]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "🦅 أهلاً بك في صقر الحماية!\nاختر نوع الفحص المطلوب من الأزرار:", 
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text("🦅 صقر الحماية جاهز، اختر نوع الفحص:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    if query.data == 'mode_link':
-        context.user_data['mode'] = 'link'
-        await query.edit_message_text("🔗 ممتاز، أرسل الرابط الذي تود فحصه.")
-    elif query.data == 'mode_file':
-        context.user_data['mode'] = 'file'
-        await query.edit_message_text("📁 ممتاز، أرسل الملف الذي تود فحصه.")
+    context.user_data['mode'] = query.data
+    await query.edit_message_text(f"✅ تم اختيار {query.data}, أرسل الآن...")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await is_rate_limited(update): return
-    
     mode = context.user_data.get('mode')
-    if not mode:
-        await update.message.reply_text("⚠️ يرجى الضغط على زر القائمة (Menu) واختيار /start")
-        return
-    # [هنا تضع منطق الفحص الحقيقي لاحقاً]
-    await update.message.reply_text(f"⏳ جاري معالجة {mode}...")
-    context.user_data['mode'] = None
+    
+    if mode == 'mode_file' and update.message.document:
+        if update.message.document.file_size > MAX_FILE_SIZE:
+            await update.message.reply_text("🚫 الملف كبير جداً (أقصى حجم 10MB).")
+            return
+        
+        await update.message.reply_text("🔍 جاري الفحص الأمني للبصمة...")
+        file = await update.message.document.get_file()
+        file_path = f"{update.message.document.file_id}.tmp"
+        await file.download_to_drive(file_path)
+        
+        file_hash = get_file_hash(file_path)
+        # هنا يتم الربط بـ API الخاص بـ VirusTotal باستخدام file_hash
+        await update.message.reply_text(f"✅ تم الفحص! بصمة الملف: `{file_hash}`")
+        os.remove(file_path)
+    else:
+        await update.message.reply_text("⚠️ يرجى الضغط على زر /start من القائمة أولاً.")
 
-# 5. تشغيل البوت مع تفعيل قائمة Menu
 if __name__ == '__main__':
     Thread(target=run_server).start()
     app_bot = ApplicationBuilder().token(TOKEN).build()
     
-    # --- هذا الجزء يضيف زر المنيو والقائمة ---
-    commands = [BotCommand("start", "بدء التشغيل والخيارات")]
-    # نستخدم هذا الأمر ليظهر زر Menu بجانب خانة الكتابة
+    # تعريف زر المنيو (Menu)
+    commands = [BotCommand("start", "تشغيل البوت")]
     app_bot.bot.set_my_commands(commands)
-    # ----------------------------------------
     
     app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(CallbackQueryHandler(button_handler))
-    app_bot.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_message))
-    
+    app_bot.add_handler(CallbackQueryHandler(handle_callback))
+    app_bot.add_handler(MessageHandler(filters.Document.ALL | filters.TEXT, handle_message))
     app_bot.run_polling()
