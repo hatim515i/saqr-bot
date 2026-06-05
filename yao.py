@@ -2,7 +2,7 @@ import logging, time, os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
 
-# التوكن يسحب من متغيرات البيئة في رندر (أمان أكثر)
+# التوكن يسحب من متغيرات البيئة في رندر
 TOKEN = os.environ.get('BOT_TOKEN')
 ADMIN_ID = 5946250464
 
@@ -27,7 +27,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
     
-    # 3. إرسال القائمة للمستخدم
+    # 3. إرسال القائمة للمستخدم (بدون تفاصيل تقنية)
     keyboard = [[InlineKeyboardButton("🔍 فحص رابط", callback_data='mode_link'), 
                  InlineKeyboardButton("📁 فحص ملف", callback_data='mode_file')]]
     
@@ -49,10 +49,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     app_bot = ApplicationBuilder().token(TOKEN).build()
     
-    # تعيين الأوامر بشكل احترافي
-    # للجميع:
+    # الخطوة الأهم: مسح القائمة القديمة من تليجرام تماماً
+    app_bot.bot.delete_my_commands()
+    
+    # تعيين القائمة النظيفة للجميع (start فقط)
     app_bot.bot.set_my_commands([("start", "بدء البوت")])
-    # لك أنت (المدير):
+    
+    # تعيين القائمة الخاصة بك أنت فقط (start و logs)
     app_bot.bot.set_my_commands([("start", "بدء البوت"), ("logs", "سجل الأحداث")], 
                                 scope={'type': 'chat', 'chat_id': ADMIN_ID})
     
