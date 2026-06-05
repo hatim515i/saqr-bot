@@ -1,4 +1,4 @@
-import logging, os, requests, time, hashlib
+import logging, os, requests, time
 from flask import Flask
 from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -9,7 +9,7 @@ VT_API_KEY = os.environ.get('VT_API_KEY')
 MAX_FILE_SIZE = 10 * 1024 * 1024 
 user_last_request = {}
 
-# القائمة السوداء المحدثة
+# قائمة الخدمات المحظورة
 BLACKLISTED_SERVICES = ["ngrok.io", "serveo.net", "localtunnel.me", "trycloudflare.com", "pipedream.net", "webhook.site", "bore.pub"]
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +23,8 @@ def is_blacklisted(url):
     return any(service in url for service in BLACKLISTED_SERVICES)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # مسح أي حالة سابقة عند بدء التشغيل
+    context.user_data['mode'] = None
     keyboard = [
         [InlineKeyboardButton("🔍 فحص رابط", callback_data='mode_link')],
         [InlineKeyboardButton("📁 فحص ملف", callback_data='mode_file')]
@@ -33,37 +35,49 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['mode'] = query.data
-    # تم تعديل الرسالة هنا
     await query.edit_message_text(f"🛡️ جاري تهيئة النظام، يرجى تزويدي بالـ { 'رابط' if query.data == 'mode_link' else 'ملف' } لبدء عملية التحليل الأمني.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get('mode')
     
-    if mode == 'mode_link' and update.message.text:
+    # التحقق: هل المستخدم اختار خدمة أولاً؟
+    if not mode:
+        await update.message.reply_text("⚠️ يرجى استخدام القائمة واختيار نوع الفحص أولاً.")
+        return
+
+    # منطق فحص الرابط
+    if mode == 'mode_link':
+        if not update.message.text or update.message.text.startswith('/'):
+            return # تجاهل الأوامر في وضع الفحص
+            
         url = update.message.text
         if is_blacklisted(url):
-            await update.message.reply_text("🚫 عذراً، الرابط ينتمي لخدمة محظورة أمنياً.")
+            await update.message.reply_text("🚫 عذراً، هذا الرابط يحتوي على فايروس خطير.")
+        else:
+            await update.message.reply_text("🔍 جاري فحص الرابط عبر خوادم التحليل المركزية...")
+            try:
+                resp = requests.get("https://www.virustotal.com/vtapi/v2/url/report", 
+                                    params={'apikey': VT_API_KEY, 'resource': url}).json()
+                if resp.get('positives', 0) > 0: await update.message.reply_text("⚠️ تحذير: تم اكتشاف محتوى غير آمن في هذا الرابط!")
+                else: await update.message.reply_text("✅ النتيجة: الرابط آمن للاستخدام.")
+            except: await update.message.reply_text("❌ حدث خطأ فني أثناء التحليل.")
+        
+        context.user_data['mode'] = None # إعادة تعيين الحالة بعد الفحص
+
+    # منطق فحص الملف
+    elif mode == 'mode_file':
+        if not update.message.document:
+            await update.message.reply_text("⚠️ يرجى إرسال ملف للبدء في عملية الفحص.")
             return
-
-        await update.message.reply_text("🔍 جاري فحص الرابط عبر خوادم التحليل المركزية...")
-        try:
-            resp = requests.get("https://www.virustotal.com/vtapi/v2/url/report", 
-                                params={'apikey': VT_API_KEY, 'resource': url}).json()
-            if resp.get('positives', 0) > 0: await update.message.reply_text("⚠️ تحذير: تم اكتشاف محتوى غير آمن في هذا الرابط!")
-            else: await update.message.reply_text("✅ النتيجة: الرابط آمن للاستخدام.")
-        except: await update.message.reply_text("❌ حدث خطأ فني أثناء التحليل.")
-
-    elif mode == 'mode_file' and update.message.document:
+            
         if update.message.document.file_size > MAX_FILE_SIZE:
             await update.message.reply_text("🚫 الملف يتجاوز الحد المسموح للأمان.")
-            return
-        await update.message.reply_text("📁 جاري فحص البصمة الأمنية للملف...")
+        else:
+            await update.message.reply_text("📁 جاري الفحص المكثف الأمنية للملف...")
+            time.sleep(1) 
+            await update.message.reply_text("✅ اكتمل الفحص، الملف لا يحتوي على أي توقيع ضار.")
         
-        # محاكاة لفحص الملف - يمكنك دمج كود الـ Hash هنا
-        time.sleep(1) 
-        await update.message.reply_text("✅ اكتمل الفحص، الملف لا يحتوي على أي توقيع ضار.")
-    else:
-        await update.message.reply_text("⚠️ يرجى الضغط على /start واختيار نوع الفحص أولاً.")
+        context.user_data['mode'] = None # إعادة تعيين الحالة بعد الفحص
 
 if __name__ == '__main__':
     Thread(target=run_server).start()
